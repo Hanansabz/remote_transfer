@@ -143,30 +143,28 @@ class TransferApp:
         tk.Label(self.receive_tab, text="Trusted local network only · transfer contents are not encrypted yet.", fg="#7787a4", bg="#10182b", font=("Segoe UI", 9)).pack(anchor="w", padx=3)
 
     def build_send_tab(self):
-        file_card = self.card(self.send_tab, "Choose a file", "Select one file to send. The receiver chooses where it is saved.")
-        self.label(file_card, "FILE")
-        row = tk.Frame(file_card, bg="#151f34")
-        row.pack(fill="x")
-        self.entry(row, self.file_path).pack(side="left", fill="x", expand=True, ipady=9)
-        self.button(row, "Choose file", self.choose_file).pack(side="left", padx=(8, 0))
-        self.file_info = tk.Label(file_card, text="", fg="#7f90ac", bg="#151f34", font=("Segoe UI", 9))
-        self.file_info.pack(anchor="w", pady=(8, 0))
+        panel = self.card(self.send_tab, "Send a file", "Choose a file, then enter the receiver details shown on the other computer.")
+        self.label(panel, "FILE TO SEND")
+        file_row = tk.Frame(panel, bg="#151f34")
+        file_row.pack(fill="x")
+        self.entry(file_row, self.file_path).pack(side="left", fill="x", expand=True, ipady=8)
+        self.button(file_row, "Choose file…", self.choose_file).pack(side="left", padx=(8, 0))
+        self.file_info = tk.Label(panel, text="No file selected", fg="#7f90ac", bg="#151f34", font=("Segoe UI", 9))
+        self.file_info.pack(anchor="w", pady=(6, 8))
 
-        dest = self.card(self.send_tab, "Where should it go?", "Enter the address shown on the receiving computer.")
-        self.label(dest, "RECEIVER ADDRESS")
-        self.entry(dest, self.destination_host).pack(fill="x", ipady=9)
-        self.label(dest, "ONE-TIME PAIRING CODE")
-        self.entry(dest, self.destination_code, show="•").pack(fill="x", ipady=9)
-        controls = tk.Frame(dest, bg="#151f34")
-        controls.pack(fill="x", pady=(15, 0))
+        self.label(panel, "RECEIVER ADDRESS  ·  enter the full IP:port shown on their Receive tab")
+        self.entry(panel, self.destination_host).pack(fill="x", ipady=8)
+        self.label(panel, "ONE-TIME PAIRING CODE")
+        self.entry(panel, self.destination_code, show="•").pack(fill="x", ipady=8)
+
+        controls = tk.Frame(panel, bg="#151f34")
+        controls.pack(fill="x", pady=(14, 0))
         self.send_button = self.button(controls, "Send file", self.send_file, primary=True)
         self.send_button.pack(side="left")
         self.progress = ttk.Progressbar(controls, mode="determinate", maximum=100)
         self.progress.pack(side="left", fill="x", expand=True, padx=(14, 0))
-        tk.Label(dest, textvariable=self.sender_status, fg="#aebbd4", bg="#151f34", font=("Segoe UI", 9)).pack(anchor="w", pady=(12, 0))
-
-        tk.Label(self.send_tab, text="The receiver must approve the transfer before data is sent.", fg="#7787a4", bg="#10182b", font=("Segoe UI", 9)).pack(anchor="w", padx=3)
-
+        tk.Label(panel, textvariable=self.sender_status, fg="#aebbd4", bg="#151f34", font=("Segoe UI", 9)).pack(anchor="w", pady=(10, 0))
+        tk.Label(self.send_tab, text="The receiver approves the file before it is saved. Both computers must be on the same local network.", fg="#7787a4", bg="#10182b", font=("Segoe UI", 9), wraplength=650, justify="left").pack(anchor="w", padx=3)
     def choose_folder(self):
         folder = filedialog.askdirectory(initialdir=self.save_folder.get())
         if folder:
@@ -319,13 +317,24 @@ class TransferApp:
                 pass
     def send_file(self):
         path = Path(self.file_path.get()).expanduser()
-        host = self.destination_host.get().strip()
+        address = self.destination_host.get().strip()
         code = self.destination_code.get().strip()
         if not path.is_file():
             messagebox.showerror("Choose a file", "Choose a file to send first.")
             return
-        if not host or len(code) != 6 or not code.isdigit():
-            messagebox.showerror("Receiver details needed", "Enter the receiver’s address and its six-digit code.")
+        if not address or len(code) != 6 or not code.isdigit():
+            messagebox.showerror("Receiver details needed", "Enter the receiver’s full address and six-digit pairing code.")
+            return
+        try:
+            if address.count(":") == 1:
+                host, port_text = address.rsplit(":", 1)
+                port = int(port_text)
+            else:
+                host, port = address, PORT
+            if not host or not 1 <= port <= 65535:
+                raise ValueError
+        except ValueError:
+            messagebox.showerror("Address format", "Enter an address like 192.168.1.23:8765.")
             return
         if path.stat().st_size > MAX_FILE_SIZE:
             messagebox.showerror("File is too large", "The current version supports files up to 10 GB.")
@@ -333,9 +342,9 @@ class TransferApp:
         self.send_button.config(state="disabled")
         self.progress["value"] = 0
         self.sender_status.set("Connecting to receiver…")
-        threading.Thread(target=self.sender_worker, args=(path, host, code), daemon=True).start()
+        threading.Thread(target=self.sender_worker, args=(path, host, port, code), daemon=True).start()
 
-    def sender_worker(self, path, host, code):
+    def sender_worker(self, path, host, port, code):
         try:
             size = path.stat().st_size
             digest = hashlib.sha256()
@@ -350,7 +359,7 @@ class TransferApp:
             message = f"{nonce}\n{filename}\n{size}\n{expected_hash}".encode("utf-8")
             proof = hmac.new(code.encode(), message, hashlib.sha256).hexdigest()
             header = {"name": path.name, "size": size, "sha256": file_hash, "nonce": nonce, "proof": proof}
-            with socket.create_connection((host, PORT), timeout=10) as conn:
+            with socket.create_connection((host, port), timeout=10) as conn:
                 conn.settimeout(120)
                 file_obj = conn.makefile("rb")
                 send_json(conn, header)
@@ -408,5 +417,7 @@ if __name__ == "__main__":
     window = tk.Tk()
     TransferApp(window)
     window.mainloop()
+
+
 
 
