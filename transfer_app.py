@@ -356,7 +356,7 @@ class TransferApp:
                     digest.update(block)
             file_hash = digest.hexdigest()
             nonce = secrets.token_hex(16)
-            message = f"{nonce}\n{filename}\n{size}\n{expected_hash}".encode("utf-8")
+            message = f"{nonce}\n{path.name}\n{size}\n{file_hash}".encode("utf-8")
             proof = hmac.new(code.encode(), message, hashlib.sha256).hexdigest()
             header = {"name": path.name, "size": size, "sha256": file_hash, "nonce": nonce, "proof": proof}
             with socket.create_connection((host, port), timeout=10) as conn:
